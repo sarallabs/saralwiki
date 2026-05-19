@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1777099193550,
+      "tag": "0000_slimy_unus",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1777546000000,
+      "tag": "0001_roles_access",
+      "breakpoints": true
+    }
+  ]
+}
