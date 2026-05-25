@@ -8,9 +8,20 @@ import { MessageInput } from "./MessageInput";
 import { ThreadPanel } from "./ThreadPanel";
 import { Hash } from "lucide-react";
 
+let sharedAblyClient: Ably.Realtime | null = null;
+
 interface ChatAreaProps {
   channel: Channel;
   currentUserId: string;
+}
+
+interface ReactionEvent {
+  id: string;
+  messageId: string;
+  userId: string;
+  emoji: string;
+  userName?: string | null;
+  action: "added" | "removed";
 }
 
 export function ChatArea({ channel, currentUserId }: ChatAreaProps) {
@@ -33,10 +44,8 @@ export function ChatArea({ channel, currentUserId }: ChatAreaProps) {
     fetchMessages();
   }, [channel.id]);
 
-let sharedAblyClient: Ably.Realtime | null = null;
-
   useEffect(() => {
-    let ablyChannel: any = null;
+    let ablyChannel: ReturnType<Ably.Realtime["channels"]["get"]> | null = null;
 
     async function initAbly() {
       if (!sharedAblyClient) {
@@ -44,11 +53,11 @@ let sharedAblyClient: Ably.Realtime | null = null;
       }
       ablyChannel = sharedAblyClient.channels.get(`channel:${channel.id}`);
       
-      ablyChannel.subscribe("message", (message: any) => {
+      ablyChannel.subscribe("message", (message: Ably.Message) => {
         setMessages(prev => {
-          if (prev.find(m => m.id === message.data.id)) return prev;
+          const newMsg = message.data as Message;
+          if (prev.find(m => m.id === newMsg.id)) return prev;
           
-          const newMsg = message.data;
           let updated = [...prev, newMsg];
           if (newMsg.threadParentId) {
             updated = updated.map(m => m.id === newMsg.threadParentId ? { ...m, replyCount: (m.replyCount || 0) + 1 } : m);
@@ -58,10 +67,10 @@ let sharedAblyClient: Ably.Realtime | null = null;
         scrollToBottom();
       });
 
-      ablyChannel.subscribe("reaction", (message: any) => {
+      ablyChannel.subscribe("reaction", (message: Ably.Message) => {
         setMessages(prev => prev.map(msg => {
-          if (msg.id !== message.data.messageId) return msg;
-          const rx = message.data;
+          const rx = message.data as ReactionEvent;
+          if (msg.id !== rx.messageId) return msg;
           let newReactions = [...(msg.reactions || [])];
           if (rx.action === "added") {
             newReactions.push({ id: rx.id, messageId: rx.messageId, userId: rx.userId, emoji: rx.emoji, userName: rx.userName });
@@ -79,9 +88,9 @@ let sharedAblyClient: Ably.Realtime | null = null;
       try {
         if (ablyChannel) {
           ablyChannel.unsubscribe();
-          ablyChannel.detach(() => {});
+          void ablyChannel.detach();
         }
-      } catch (error) {
+      } catch {
         // Ignore synchronous cleanup errors
       }
     };
