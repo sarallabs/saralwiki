@@ -1,0 +1,638 @@
+{% extends "base.html" %}
+{% block title %}{{ ticket.ticket_key }} - SaralTrack{% endblock %}
+{% block content %}
+<div class="space-y-4">
+    <!-- Breadcrumb -->
+    <div class="flex items-center gap-2 text-sm">
+        <a href="{{ url_for('projects.project_overview', key=project.key) }}" class="dark:text-gray-400 text-gray-500 hover:text-electric">{{ project.key }}</a>
+        <span class="dark:text-gray-600 text-gray-300">/</span>
+        <span class="font-mono text-electric">{{ ticket.ticket_key }}</span>
+    </div>
+
+    {% if ticket.hard_deadline and ticket.deadline_urgency() == 'red' %}
+    <div class="bg-rose/10 border border-rose/30 rounded-lg px-4 py-3 flex items-center gap-3">
+        <svg class="w-5 h-5 text-rose flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+        <div>
+            <p class="font-semibold text-rose">Hard Deadline Breached!</p>
+            <p class="text-sm dark:text-gray-300 text-gray-600">The hard deadline was {{ ticket.hard_deadline.strftime('%b %d, %Y at %H:%M') }}. Immediate action required.</p>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="grid grid-cols-1 lg:grid-cols-10 gap-6">
+        <!-- Left Panel (70%) -->
+        <div class="lg:col-span-7 space-y-6">
+            <!-- Title -->
+            <div x-data="{ editing: false, title: '{{ ticket.title|e }}' }">
+                <h1 x-show="!editing" @click="editing = true" class="text-2xl font-bold cursor-pointer hover:text-electric transition-colors" x-text="title"></h1>
+                <div x-show="editing" x-cloak class="flex gap-2">
+                    <input type="text" x-model="title" class="flex-1 text-2xl font-bold px-3 py-1 rounded-lg dark:bg-navy bg-gray-50 border dark:border-navy-border border-gray-300 focus:outline-none focus:ring-2 focus:ring-electric">
+                    <button @click="updateField('title', title); editing = false" class="px-3 py-1 bg-electric text-white rounded-lg text-sm">Save</button>
+                    <button @click="editing = false" class="px-3 py-1 dark:bg-navy-lighter bg-gray-100 rounded-lg text-sm">Cancel</button>
+                </div>
+            </div>
+
+            <!-- Description -->
+            <div class="dark:bg-navy-light bg-white rounded-xl border dark:border-navy-border border-gray-200 p-5" 
+                 x-data="{ editing: false, desc: {{ ticket.description|tojson }} }">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="font-semibold text-sm">Description</h3>
+                    {% if current_user.can_edit_ticket(ticket) %}
+                    <button @click="editing = !editing" class="text-xs text-electric hover:underline" x-text="editing ? 'Cancel' : 'Edit'"></button>
+                    {% endif %}
+                </div>
+                <div x-show="!editing" class="prose prose-sm dark:prose-invert max-w-none">
+                    {% if desc_html %}{{ desc_html|safe }}{% else %}<p class="dark:text-gray-500 text-gray-400 italic">No description</p>{% endif %}
+                </div>
+                <div x-show="editing" x-cloak>
+                    <textarea x-model="desc" rows="8" class="w-full px-3 py-2 rounded-lg dark:bg-navy bg-gray-50 border dark:border-navy-border border-gray-300 text-sm font-mono mb-2"></textarea>
+                    <button @click="updateField('description', desc); editing = false" class="px-3 py-2 bg-electric text-white rounded-lg text-sm">Save</button>
+                </div>
+            </div>
+
+            <!-- Subtasks -->
+            {% if subtasks %}
+            <div class="dark:bg-navy-light bg-white rounded-xl border dark:border-navy-border border-gray-200 p-5">
+                <h3 class="font-semibold text-sm mb-3">Subtasks</h3>
+                <div class="space-y-2">
+                    {% for sub in subtasks %}
+                    <a href="{{ url_for('tickets.ticket_detail', key=project.key, ticket_key=sub.ticket_key) }}"
+                       class="flex items-center justify-between px-3 py-2 rounded-lg dark:hover:bg-navy-lighter hover:bg-gray-50">
+                        <div class="flex items-center gap-2">
+                            <span class="{% if sub.status == 'done' %}line-through dark:text-gray-500 text-gray-400{% endif %}">
+                                <span class="font-mono text-xs dark:text-gray-400 text-gray-500">{{ sub.ticket_key }}</span>
+                                <span class="text-sm ml-2">{{ sub.title }}</span>
+                            </span>
+                        </div>
+                        <span class="text-xs px-2 py-0.5 rounded-full dark:bg-navy-lighter bg-gray-100">{{ sub.status|replace('_', ' ') }}</span>
+                    </a>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Comments / Activity tabs -->
+            <div class="dark:bg-navy-light bg-white rounded-xl border dark:border-navy-border border-gray-200 p-5"
+                 x-data="{ tab: 'comments' }">
+                <div class="flex items-center gap-1 mb-4 border-b dark:border-navy-border border-gray-200 -mx-5 px-5 pb-3">
+                    <button @click="tab='comments'" :class="tab==='comments' ? 'text-electric border-b-2 border-electric' : 'dark:text-gray-400 text-gray-500'"
+                            class="text-sm font-medium px-2 pb-1">Comments ({{ comments|length }})</button>
+                    <button @click="tab='changelog'" :class="tab==='changelog' ? 'text-electric border-b-2 border-electric' : 'dark:text-gray-400 text-gray-500'"
+                            class="text-sm font-medium px-2 pb-1">Changelog</button>
+                </div>
+
+                <!-- Comments tab -->
+                <div x-show="tab==='comments'">
+                    <div class="space-y-5" id="comments-list">
+                        {% for item in comments %}
+                        <div class="flex gap-3" id="comment-{{ item.comment.id }}">
+                            <div class="w-8 h-8 rounded-full bg-electric flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                                {{ item.comment.author.get_initials() }}
+                            </div>
+                            <div class="flex-1">
+                                <div class="flex items-center gap-2 mb-1">
+                                    <span class="font-medium text-sm">{{ item.comment.author.full_name }}</span>
+                                    <span class="text-xs dark:text-gray-500 text-gray-400">{{ item.comment.created_at.strftime('%b %d, %H:%M') if item.comment.created_at else '' }}</span>
+                                    {% if item.comment.is_internal %}
+                                    <span class="text-xs px-1.5 py-0.5 rounded bg-amber/10 text-amber">Internal</span>
+                                    {% endif %}
+                                </div>
+                                <div class="prose prose-sm dark:prose-invert max-w-none">{{ item.html|safe }}</div>
+                                <!-- Reactions -->
+                                <div class="flex items-center gap-1 mt-2 flex-wrap" id="reactions-{{ item.comment.id }}">
+                                    {% set rxns = reactions_map.get(item.comment.id, {}) %}
+                                    {% for emoji, users in rxns.items() %}
+                                    <button onclick="toggleReaction({{ item.comment.id }}, '{{ emoji }}')"
+                                            class="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs dark:bg-navy-lighter bg-gray-100 hover:bg-electric/10 transition-colors"
+                                            title="{{ users|join(', ') }}">
+                                        <span>{{ emoji }}</span><span class="font-medium">{{ users|length }}</span>
+                                    </button>
+                                    {% endfor %}
+                                    <div x-data="{ open: false }" class="relative">
+                                        <button @click="open = !open" class="px-2 py-0.5 rounded-full text-xs dark:bg-navy-lighter bg-gray-100 hover:bg-electric/10 dark:text-gray-400 text-gray-500">+ 😄</button>
+                                        <div x-show="open" @click.away="open=false" x-cloak
+                                             class="absolute bottom-full left-0 mb-1 dark:bg-navy-light bg-white border dark:border-navy-border border-gray-200 rounded-xl p-2 flex gap-1.5 shadow-xl z-10">
+                                            {% for emoji in ['👍','👎','❤️','🎉','👀','🚀','😄','🤔'] %}
+                                            <button @click="toggleReaction({{ item.comment.id }}, '{{ emoji }}'); open=false"
+                                                    class="text-lg hover:scale-125 transition-transform">{{ emoji }}</button>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+
+                    <!-- Add Comment -->
+                    <div class="mt-6 pt-4 border-t dark:border-navy-border border-gray-200" x-data="{ content: '', internal: false }">
+                        <textarea x-model="content" rows="3" placeholder="Add a comment... (@username to mention)"
+                                  class="w-full px-3 py-2 rounded-lg dark:bg-navy bg-gray-50 border dark:border-navy-border border-gray-300 text-sm mb-2 focus:outline-none focus:ring-2 focus:ring-electric"></textarea>
+                        <div class="flex items-center justify-between">
+                            <label class="flex items-center gap-2 text-sm">
+                                <input type="checkbox" x-model="internal" class="rounded text-electric">
+                                Internal note
+                            </label>
+                            <button @click="submitComment(content, internal); content = ''"
+                                    class="px-4 py-2 bg-electric hover:bg-electric-dark text-white rounded-lg text-sm font-medium transition-colors"
+                                    :disabled="!content.trim()">
+                                Comment
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Changelog tab -->
+                <div x-show="tab==='changelog'" x-cloak>
+                    <div class="space-y-2">
+                        {% for log in ticket.activity_logs.order_by('ActivityLog.created_at.desc()').limit(50).all() if log.action not in ('comment_added',) %}
+                        <div class="flex items-start gap-3 py-2 border-b dark:border-navy-border/50 border-gray-100 last:border-0">
+                            <div class="w-1.5 h-1.5 rounded-full mt-2 flex-shrink-0
+                                {% if 'status' in log.action %}bg-electric
+                                {% elif 'priority' in log.action %}bg-amber
+                                {% elif 'assign' in log.action %}bg-emerald
+                                {% elif 'deadline' in log.action %}bg-rose
+                                {% else %}bg-gray-400{% endif %}"></div>
+                            <div class="flex-1 min-w-0">
+                                <div class="flex items-center gap-2 flex-wrap">
+                                    <span class="text-sm font-medium">{{ log.user.full_name if log.user else 'System' }}</span>
+                                    <span class="text-sm dark:text-gray-300 text-gray-700">
+                                        {% if log.action == 'status_changed' %}changed status
+                                        {% elif log.action == 'priority_changed' %}changed priority
+                                        {% elif log.action == 'assigned' %}changed assignee
+                                        {% elif log.action == 'title_changed' %}changed title
+                                        {% elif log.action == 'description_changed' %}updated description
+                                        {% elif log.action == 'deadline_updated' %}updated deadline
+                                        {% elif log.action == 'sprint_changed' %}changed sprint
+                                        {% elif log.action == 'fix_version_changed' %}changed fix version
+                                        {% elif log.action == 'labels_changed' %}updated labels
+                                        {% elif log.action == 'time_logged' %}logged time
+                                        {% elif log.action == 'link_added' %}added link
+                                        {% elif log.action == 'link_removed' %}removed link
+                                        {% elif log.action == 'attachment_added' %}added attachment
+                                        {% elif log.action == 'ticket_created' %}created ticket
+                                        {% else %}{{ log.action|replace('_',' ') }}{% endif %}
+                                    </span>
+                                    {% if log.old_value and log.new_value and log.action not in ('description_changed','custom_fields_updated') %}
+                                    <span class="text-xs dark:bg-navy bg-gray-100 px-2 py-0.5 rounded line-through dark:text-gray-500 text-gray-400">{{ log.old_value[:30] }}</span>
+                                    <span class="text-xs dark:bg-navy bg-gray-100 px-2 py-0.5 rounded font-medium text-electric">{{ log.new_value[:30] }}</span>
+                                    {% elif log.new_value and log.action not in ('description_changed','custom_fields_updated') %}
+                                    <span class="text-xs dark:text-gray-400 text-gray-500">{{ log.new_value[:60] }}</span>
+                                    {% endif %}
+                                    <span class="text-xs dark:text-gray-600 text-gray-400 ml-auto">{{ log.created_at.strftime('%b %d, %H:%M') if log.created_at else '' }}</span>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Linked Issues -->
+            <div class="dark:bg-navy-light bg-white rounded-xl border dark:border-navy-border border-gray-200 p-5"
+                 x-data="{ showAdd: false, targetKey: '', linkType: 'relates_to', loading: false }"
+                 id="links-panel">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="font-semibold text-sm">Linked Issues</h3>
+                    <button @click="showAdd = !showAdd" class="text-xs text-electric hover:underline" x-text="showAdd ? 'Cancel' : '+ Add Link'"></button>
+                </div>
+
+                <!-- Add link form -->
+                <div x-show="showAdd" x-cloak class="mb-4 p-3 dark:bg-navy rounded-lg border dark:border-navy-border border-gray-200 space-y-2">
+                    <div class="flex gap-2">
+                        <select x-model="linkType" class="text-sm rounded-lg dark:bg-navy-lighter bg-gray-100 border-0 px-3 py-1.5 flex-shrink-0">
+                            <option value="blocks">Blocks</option>
+                            <option value="is_blocked_by">Is blocked by</option>
+                            <option value="duplicates">Duplicates</option>
+                            <option value="relates_to">Relates to</option>
+                        </select>
+                        <input type="text" x-model="targetKey" placeholder="Ticket key (e.g. PROJ-12)"
+                               list="ticket-key-list"
+                               class="flex-1 px-3 py-1.5 rounded-lg dark:bg-navy-lighter bg-gray-100 border-0 text-sm">
+                        <datalist id="ticket-key-list">
+                            {% for t in project_tickets %}
+                            <option value="{{ t.ticket_key }}">{{ t.title }}</option>
+                            {% endfor %}
+                        </datalist>
+                        <button @click="submitLink($data)" :disabled="loading || !targetKey.trim()"
+                                class="px-3 py-1.5 bg-electric text-white rounded-lg text-sm disabled:opacity-50">
+                            Link
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Outgoing links -->
+                <div class="space-y-1" id="links-list">
+                    {% for link in outgoing_links %}
+                    <div class="flex items-center justify-between px-2 py-1.5 rounded-lg dark:hover:bg-navy-lighter hover:bg-gray-50 group">
+                        <div class="flex items-center gap-2 min-w-0">
+                            <span class="text-xs dark:text-gray-400 text-gray-500 flex-shrink-0 w-24 text-right capitalize">{{ link.link_type|replace('_', ' ') }}</span>
+                            <a href="{{ url_for('tickets.ticket_detail', key=link.target_ticket.project.key, ticket_key=link.target_ticket.ticket_key) }}"
+                               class="text-sm text-electric hover:underline font-mono flex-shrink-0">{{ link.target_ticket.ticket_key }}</a>
+                            <span class="text-sm truncate dark:text-gray-300 text-gray-700">{{ link.target_ticket.title }}</span>
+                            <span class="text-xs px-1.5 py-0.5 rounded dark:bg-navy bg-gray-100 dark:text-gray-400 text-gray-500 flex-shrink-0">{{ link.target_ticket.status|replace('_', ' ') }}</span>
+                        </div>
+                        <form method="POST" action="{{ url_for('tickets.delete_link', key=project.key, ticket_key=ticket.ticket_key, link_id=link.id) }}" class="opacity-0 group-hover:opacity-100">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="text-xs text-rose hover:underline ml-2" onclick="return confirm('Remove link?')">✕</button>
+                        </form>
+                    </div>
+                    {% endfor %}
+
+                    <!-- Incoming links (shown with inverse label) -->
+                    {% for link in incoming_links %}
+                    <div class="flex items-center justify-between px-2 py-1.5 rounded-lg dark:hover:bg-navy-lighter hover:bg-gray-50 group">
+                        <div class="flex items-center gap-2 min-w-0">
+                            <span class="text-xs dark:text-gray-400 text-gray-500 flex-shrink-0 w-24 text-right capitalize">{{ link.inverse_label()|replace('_', ' ') }}</span>
+                            <a href="{{ url_for('tickets.ticket_detail', key=link.source_ticket.project.key, ticket_key=link.source_ticket.ticket_key) }}"
+                               class="text-sm text-electric hover:underline font-mono flex-shrink-0">{{ link.source_ticket.ticket_key }}</a>
+                            <span class="text-sm truncate dark:text-gray-300 text-gray-700">{{ link.source_ticket.title }}</span>
+                            <span class="text-xs px-1.5 py-0.5 rounded dark:bg-navy bg-gray-100 dark:text-gray-400 text-gray-500 flex-shrink-0">{{ link.source_ticket.status|replace('_', ' ') }}</span>
+                        </div>
+                        <form method="POST" action="{{ url_for('tickets.delete_link', key=project.key, ticket_key=ticket.ticket_key, link_id=link.id) }}" class="opacity-0 group-hover:opacity-100">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="text-xs text-rose hover:underline ml-2" onclick="return confirm('Remove link?')">✕</button>
+                        </form>
+                    </div>
+                    {% endfor %}
+
+                    {% if not outgoing_links and not incoming_links %}
+                    <p class="text-xs dark:text-gray-500 text-gray-400 py-1">No linked issues</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Activity -->
+            <div class="dark:bg-navy-light bg-white rounded-xl border dark:border-navy-border border-gray-200 p-5">
+                <h3 class="font-semibold text-sm mb-3">Activity</h3>
+                <div class="space-y-3">
+                    {% for log in activity %}
+                    <div class="flex items-center gap-3 text-sm">
+                        <div class="w-1.5 h-1.5 rounded-full bg-electric flex-shrink-0"></div>
+                        <span class="dark:text-gray-400 text-gray-500">
+                            <strong>{{ log.user.full_name if log.user else 'System' }}</strong>
+                            {{ log.action|replace('_', ' ') }}
+                            {% if log.old_value and log.new_value %}
+                            <span class="dark:text-gray-500 text-gray-400">{{ log.old_value }} → {{ log.new_value }}</span>
+                            {% elif log.new_value %}
+                            <span class="dark:text-gray-500 text-gray-400">{{ log.new_value[:60] }}</span>
+                            {% endif %}
+                        </span>
+                        <span class="text-xs dark:text-gray-600 text-gray-400 ml-auto">{{ log.created_at.strftime('%b %d, %H:%M') if log.created_at else '' }}</span>
+                    </div>
+                    {% endfor %}
+                    {% if not activity %}
+                    <p class="dark:text-gray-500 text-gray-400 text-sm">No activity yet</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Panel (30%) -->
+        <div class="lg:col-span-3 space-y-4">
+            <!-- Status -->
+            <div class="dark:bg-navy-light bg-white rounded-xl border dark:border-navy-border border-gray-200 p-4 space-y-4">
+                <div>
+                    <label class="block text-xs font-medium dark:text-gray-400 text-gray-500 mb-1">Status</label>
+                    <select onchange="updateStatus(this.value)" class="w-full px-3 py-2 rounded-lg dark:bg-navy bg-gray-50 border dark:border-navy-border border-gray-300 text-sm">
+                        {% for s in ['backlog', 'todo', 'in_progress', 'in_review', 'testing', 'done', 'cancelled'] %}
+                        <option value="{{ s }}" {% if ticket.status == s %}selected{% endif %}>{{ s|replace('_', ' ')|capitalize }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-medium dark:text-gray-400 text-gray-500 mb-1">Priority</label>
+                    <select onchange="updateField('priority', this.value)" class="w-full px-3 py-2 rounded-lg dark:bg-navy bg-gray-50 border dark:border-navy-border border-gray-300 text-sm">
+                        {% for p in ['critical', 'high', 'medium', 'low'] %}
+                        <option value="{{ p }}" {% if ticket.priority == p %}selected{% endif %}>{{ p|capitalize }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-medium dark:text-gray-400 text-gray-500 mb-1">Type</label>
+                    <select onchange="updateField('type', this.value)" class="w-full px-3 py-2 rounded-lg dark:bg-navy bg-gray-50 border dark:border-navy-border border-gray-300 text-sm">
+                        {% for t in ['task', 'bug', 'story', 'epic', 'subtask', 'improvement'] %}
+                        <option value="{{ t }}" {% if ticket.type == t %}selected{% endif %}>{{ t|capitalize }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-medium dark:text-gray-400 text-gray-500 mb-1">Assignee</label>
+                    <select onchange="assignTicket(this.value)" class="w-full px-3 py-2 rounded-lg dark:bg-navy bg-gray-50 border dark:border-navy-border border-gray-300 text-sm">
+                        <option value="">Unassigned</option>
+                        {% for m in members %}
+                        <option value="{{ m.id }}" {% if ticket.assigned_to == m.id %}selected{% endif %}>{{ m.full_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-medium dark:text-gray-400 text-gray-500 mb-1">Reporter</label>
+                    <p class="text-sm">{{ ticket.creator.full_name if ticket.creator else 'Unknown' }}</p>
+                </div>
+            </div>
+
+            <!-- Deadlines -->
+            <div class="dark:bg-navy-light bg-white rounded-xl border dark:border-navy-border border-gray-200 p-4 space-y-4 {% if ticket.deadline_urgency() == 'red' %}border-rose deadline-red{% endif %}">
+                <div>
+                    <label class="block text-xs font-medium dark:text-gray-400 text-gray-500 mb-1">Soft Deadline</label>
+                    <input type="datetime-local" value="{{ ticket.soft_deadline.strftime('%Y-%m-%dT%H:%M') if ticket.soft_deadline else '' }}"
+                           onchange="updateField('soft_deadline', this.value)"
+                           class="w-full px-3 py-2 rounded-lg dark:bg-navy bg-gray-50 border dark:border-navy-border border-gray-300 text-sm">
+                    {% set urgency = ticket.deadline_urgency() %}
+                    {% if urgency in ('yellow', 'orange') %}
+                    <p class="text-xs mt-1 {% if urgency == 'yellow' %}text-amber{% else %}text-orange-500{% endif %}">
+                        {% if urgency == 'yellow' %}Approaching{% else %}Passed{% endif %}
+                    </p>
+                    {% endif %}
+                </div>
+                <div>
+                    <label class="block text-xs font-medium dark:text-gray-400 text-gray-500 mb-1">Hard Deadline</label>
+                    <input type="datetime-local" value="{{ ticket.hard_deadline.strftime('%Y-%m-%dT%H:%M') if ticket.hard_deadline else '' }}"
+                           onchange="updateField('hard_deadline', this.value)"
+                           class="w-full px-3 py-2 rounded-lg dark:bg-navy bg-gray-50 border dark:border-navy-border border-gray-300 text-sm"
+                           {% if current_user.role not in ('admin', 'manager') %}disabled{% endif %}>
+                    {% if urgency == 'red' %}
+                    <p class="text-xs mt-1 text-rose font-semibold">BREACHED</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Sprint & Points -->
+            <div class="dark:bg-navy-light bg-white rounded-xl border dark:border-navy-border border-gray-200 p-4 space-y-4">
+                <div>
+                    <label class="block text-xs font-medium dark:text-gray-400 text-gray-500 mb-1">Sprint</label>
+                    <select onchange="updateField('sprint_id', this.value)" class="w-full px-3 py-2 rounded-lg dark:bg-navy bg-gray-50 border dark:border-navy-border border-gray-300 text-sm">
+                        <option value="">No Sprint</option>
+                        {% for s in sprints %}
+                        <option value="{{ s.id }}" {% if ticket.sprint_id == s.id %}selected{% endif %}>{{ s.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium dark:text-gray-400 text-gray-500 mb-1">Story Points</label>
+                    <input type="number" value="{{ ticket.story_points }}" min="0" max="100"
+                           onchange="updateField('story_points', this.value)"
+                           class="w-full px-3 py-2 rounded-lg dark:bg-navy bg-gray-50 border dark:border-navy-border border-gray-300 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium dark:text-gray-400 text-gray-500 mb-1">Hours (Est. / Logged)</label>
+                    <div class="flex items-center gap-2 mb-2">
+                        <span class="text-sm">{{ ticket.estimated_hours or 0 }}h est. / {{ ticket.logged_hours or 0 }}h logged</span>
+                    </div>
+                    {% if ticket.estimated_hours and ticket.estimated_hours > 0 %}
+                    <div class="w-full h-2 dark:bg-navy bg-gray-200 rounded-full overflow-hidden">
+                        {% set pct = ((ticket.logged_hours or 0) / ticket.estimated_hours * 100)|int %}
+                        <div class="h-full rounded-full {% if pct > 100 %}bg-rose{% elif pct > 75 %}bg-amber{% else %}bg-electric{% endif %}" style="width: {{ [pct, 100]|min }}%"></div>
+                    </div>
+                    {% endif %}
+                    <div class="mt-2" x-data="{ hours: '' }">
+                        <div class="flex gap-2">
+                            <input type="number" x-model="hours" min="0.5" step="0.5" placeholder="Log hours"
+                                   class="flex-1 px-3 py-1.5 rounded-lg dark:bg-navy bg-gray-50 border dark:border-navy-border border-gray-300 text-sm">
+                            <button @click="logTime(hours); hours = ''" class="px-3 py-1.5 bg-electric text-white rounded-lg text-xs">Log</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Component -->
+            {% if components %}
+            <div class="dark:bg-navy-light bg-white rounded-xl border dark:border-navy-border border-gray-200 p-4">
+                <label class="block text-xs font-medium dark:text-gray-400 text-gray-500 mb-1">Component</label>
+                <select onchange="updateField('component_id', this.value)"
+                        class="w-full px-3 py-2 rounded-lg dark:bg-navy bg-gray-50 border dark:border-navy-border border-gray-300 text-sm">
+                    <option value="">None</option>
+                    {% for comp in components %}
+                    <option value="{{ comp.id }}" {% if ticket.component_id == comp.id %}selected{% endif %}>
+                        {{ comp.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+                {% if ticket.component %}
+                <div class="flex items-center gap-2 mt-1.5">
+                    <div class="w-2.5 h-2.5 rounded-full" style="background:{{ ticket.component.color }}"></div>
+                    <span class="text-xs dark:text-gray-400 text-gray-500">{{ ticket.component.name }}</span>
+                </div>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            <!-- Fix Version -->
+            <div class="dark:bg-navy-light bg-white rounded-xl border dark:border-navy-border border-gray-200 p-4">
+                <label class="block text-xs font-medium dark:text-gray-400 text-gray-500 mb-1">Fix Version</label>
+                <select onchange="updateField('fix_version_id', this.value)" class="w-full px-3 py-2 rounded-lg dark:bg-navy bg-gray-50 border dark:border-navy-border border-gray-300 text-sm">
+                    <option value="">None</option>
+                    {% for v in versions %}
+                    <option value="{{ v.id }}" {% if ticket.fix_version_id == v.id %}selected{% endif %}>
+                        {{ v.name }}{% if v.status == 'released' %} ✓{% endif %}
+                    </option>
+                    {% endfor %}
+                </select>
+                {% if ticket.fix_version %}
+                <p class="text-xs mt-1 dark:text-gray-500 text-gray-400">
+                    {{ ticket.fix_version.status|capitalize }}
+                    {% if ticket.fix_version.release_date %} · {{ ticket.fix_version.release_date.strftime('%b %d, %Y') }}{% endif %}
+                </p>
+                {% endif %}
+            </div>
+
+            <!-- Labels -->
+            <div class="dark:bg-navy-light bg-white rounded-xl border dark:border-navy-border border-gray-200 p-4">
+                <label class="block text-xs font-medium dark:text-gray-400 text-gray-500 mb-2">Labels</label>
+                <div class="flex flex-wrap gap-1">
+                    {% for label in ticket.labels %}
+                    <span class="text-xs px-2 py-0.5 rounded-full text-white" style="background: {{ label.color }}">{{ label.name }}</span>
+                    {% endfor %}
+                    {% if not ticket.labels %}
+                    <span class="text-xs dark:text-gray-500 text-gray-400">No labels</span>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Custom Fields -->
+            {% if custom_fields %}
+            <div class="dark:bg-navy-light bg-white rounded-xl border dark:border-navy-border border-gray-200 p-4">
+                <div class="flex items-center justify-between mb-3">
+                    <label class="text-xs font-medium dark:text-gray-400 text-gray-500">Custom Fields</label>
+                </div>
+                <form method="POST" action="{{ url_for('releases.save_custom_field_values', key=project.key, ticket_key=ticket.ticket_key) }}"
+                      class="space-y-3" id="cf-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    {% for cf in custom_fields %}
+                    <div>
+                        <label class="block text-xs dark:text-gray-400 text-gray-500 mb-1">
+                            {{ cf.name }}{% if cf.required %} <span class="text-rose">*</span>{% endif %}
+                        </label>
+                        {% set current_val = cf_values.get(cf.id, '') %}
+                        {% if cf.field_type == 'dropdown' %}
+                        <select name="cf_{{ cf.id }}" class="w-full px-2 py-1.5 rounded-lg dark:bg-navy bg-gray-50 border dark:border-navy-border border-gray-300 text-sm">
+                            <option value="">–</option>
+                            {% for opt in (cf.options_json | from_json) %}
+                            <option value="{{ opt }}" {% if current_val == opt %}selected{% endif %}>{{ opt }}</option>
+                            {% endfor %}
+                        </select>
+                        {% elif cf.field_type == 'number' %}
+                        <input type="number" name="cf_{{ cf.id }}" value="{{ current_val }}"
+                               class="w-full px-2 py-1.5 rounded-lg dark:bg-navy bg-gray-50 border dark:border-navy-border border-gray-300 text-sm">
+                        {% elif cf.field_type == 'date' %}
+                        <input type="date" name="cf_{{ cf.id }}" value="{{ current_val }}"
+                               class="w-full px-2 py-1.5 rounded-lg dark:bg-navy bg-gray-50 border dark:border-navy-border border-gray-300 text-sm">
+                        {% elif cf.field_type == 'url' %}
+                        <input type="url" name="cf_{{ cf.id }}" value="{{ current_val }}" placeholder="https://"
+                               class="w-full px-2 py-1.5 rounded-lg dark:bg-navy bg-gray-50 border dark:border-navy-border border-gray-300 text-sm">
+                        {% else %}
+                        <input type="text" name="cf_{{ cf.id }}" value="{{ current_val }}"
+                               class="w-full px-2 py-1.5 rounded-lg dark:bg-navy bg-gray-50 border dark:border-navy-border border-gray-300 text-sm">
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                    <button type="submit" class="w-full px-3 py-1.5 bg-electric/10 text-electric rounded-lg text-sm hover:bg-electric/20 transition-colors">
+                        Save Custom Fields
+                    </button>
+                </form>
+            </div>
+            {% endif %}
+
+            <!-- Watchers -->
+            <div class="dark:bg-navy-light bg-white rounded-xl border dark:border-navy-border border-gray-200 p-4">
+                <div class="flex items-center justify-between mb-2">
+                    <label class="text-xs font-medium dark:text-gray-400 text-gray-500">Watchers</label>
+                    <form method="POST" action="{{ url_for('tickets.toggle_watch', key=project.key, ticket_key=ticket.ticket_key) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="text-xs text-electric hover:underline">
+                            {{ 'Unwatch' if is_watching else 'Watch' }}
+                        </button>
+                    </form>
+                </div>
+                <div class="flex -space-x-1">
+                    {% for w in ticket.watchers %}
+                    <div class="w-6 h-6 rounded-full bg-electric flex items-center justify-center text-white text-xs font-bold border-2 dark:border-navy-light border-white" title="{{ w.full_name }}">{{ w.get_initials() }}</div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Attachments -->
+            <div class="dark:bg-navy-light bg-white rounded-xl border dark:border-navy-border border-gray-200 p-4">
+                <label class="block text-xs font-medium dark:text-gray-400 text-gray-500 mb-2">Attachments</label>
+                {% for att in ticket.attachments.all() %}
+                <a href="{{ att.file_path }}" target="_blank" class="flex items-center gap-2 text-sm hover:text-electric mb-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
+                    {{ att.filename }}
+                </a>
+                {% endfor %}
+                <form method="POST" action="{{ url_for('tickets.upload_attachment', key=project.key, ticket_key=ticket.ticket_key) }}" enctype="multipart/form-data" class="mt-2">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="file" name="file" onchange="this.form.submit()" class="text-xs w-full">
+                </form>
+            </div>
+
+            <!-- Delete -->
+            {% if current_user.can_manage %}
+            <form method="POST" action="{{ url_for('tickets.delete_ticket', key=project.key, ticket_key=ticket.ticket_key) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="w-full px-4 py-2 bg-rose/10 text-rose rounded-lg text-sm hover:bg-rose/20 transition-colors" onclick="return confirm('Delete this ticket?')">
+                    Delete Ticket
+                </button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const projectKey = '{{ project.key }}';
+const ticketKey = '{{ ticket.ticket_key }}';
+
+function updateField(field, value) {
+    fetchWithCSRF(`/projects/${projectKey}/tickets/${ticketKey}/edit`, {
+        method: 'POST',
+        body: JSON.stringify({ field, value })
+    }).then(r => r.json()).then(data => {
+        if (data.success) showToast('Updated');
+        else showToast(data.error || 'Failed', 'error');
+    }).catch(() => showToast('Failed to update', 'error'));
+}
+
+function updateStatus(status) {
+    fetchWithCSRF(`/projects/${projectKey}/tickets/${ticketKey}/status`, {
+        method: 'POST',
+        body: JSON.stringify({ status })
+    }).then(r => r.json()).then(data => {
+        if (data.success) showToast('Status updated');
+        else showToast(data.error || 'Failed', 'error');
+    });
+}
+
+function assignTicket(userId) {
+    fetchWithCSRF(`/projects/${projectKey}/tickets/${ticketKey}/assign`, {
+        method: 'POST',
+        body: JSON.stringify({ assigned_to: userId })
+    }).then(r => r.json()).then(data => {
+        if (data.success) showToast('Assignee updated');
+        else showToast(data.error || 'Failed', 'error');
+    });
+}
+
+function submitComment(content, isInternal) {
+    if (!content.trim()) return;
+    fetchWithCSRF(`/projects/${projectKey}/tickets/${ticketKey}/comment`, {
+        method: 'POST',
+        body: JSON.stringify({ content, is_internal: isInternal })
+    }).then(r => r.json()).then(data => {
+        if (data.success) {
+            showToast('Comment added');
+            location.reload();
+        } else showToast(data.error || 'Failed', 'error');
+    });
+}
+
+function logTime(hours) {
+    if (!hours || hours <= 0) return;
+    fetchWithCSRF(`/projects/${projectKey}/tickets/${ticketKey}/log-time`, {
+        method: 'POST',
+        body: JSON.stringify({ hours: parseFloat(hours) })
+    }).then(r => r.json()).then(data => {
+        if (data.success) {
+            showToast(`${hours}h logged`);
+            location.reload();
+        }
+    });
+}
+
+function toggleReaction(commentId, emoji) {
+    fetchWithCSRF(`/projects/${projectKey}/tickets/${ticketKey}/comments/${commentId}/react`, {
+        method: 'POST',
+        body: JSON.stringify({ emoji })
+    }).then(r => r.json()).then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            showToast(data.error || 'Failed', 'error');
+        }
+    });
+}
+
+function submitLink(comp) {
+    if (!comp.targetKey.trim()) return;
+    comp.loading = true;
+    fetchWithCSRF(`/projects/${projectKey}/tickets/${ticketKey}/links`, {
+        method: 'POST',
+        body: JSON.stringify({ target_ticket_key: comp.targetKey.trim(), link_type: comp.linkType })
+    }).then(r => r.json()).then(data => {
+        comp.loading = false;
+        if (data.success) {
+            showToast('Link added');
+            location.reload();
+        } else {
+            showToast(data.error || 'Failed', 'error');
+        }
+    }).catch(() => { comp.loading = false; showToast('Failed', 'error'); });
+}
+</script>
+{% endblock %}
